@@ -1,0 +1,636 @@
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+-- UI debounce flag
+local uiDebounce = false
+
+-- Store UI positions
+local uiPositions = {
+	main = UDim2.new(0.36, 0, 0.39, 0),
+	search = UDim2.new(0.325, 0, 0.2, 0)
+}
+
+-- Helper: Send notification
+local function notify(title, text, duration)
+	StarterGui:SetCore("SendNotification", {
+		Title = title,
+		Text = text,
+		Duration = duration or 2
+	})
+end
+
+-- Helper: Find all tools in Workspace
+local function getAllTools()
+	local tools = {}
+	for _, obj in Workspace:GetChildren() do
+		if obj:IsA("Tool") then
+			table.insert(tools, obj)
+		end
+	end
+	return tools
+end
+
+-- Helper: Copy tool to player's backpack
+local function copyTool(tool)
+	local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+	if backpack then
+		local clone = tool:Clone()
+		clone.Parent = backpack
+		notify("Copy", "Copied to backpack: " .. tool.Name)
+	else
+		notify("Error", "Backpack not found!")
+	end
+end
+
+-- Helper: Teleport player to tool
+local function tpToTool(toolName)
+	local tools = getAllTools()
+	for _, tool in tools do
+		if tool.Name:lower() == toolName:lower() then
+			local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+			end
+			character:PivotTo(tool:GetPivot())
+			notify("TP", "Teleported to: " .. tool.Name)
+			return
+		end
+	end
+	notify("Error", "Tool not found: " .. toolName)
+end
+
+-- Store last dropped tool for BackTools
+local lastDroppedTool = nil
+
+-- Helper: Drop equipped tool (bypass drop)
+local function bypassDropEquipped()
+	local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+	local equippedTool = nil
+	for _, obj in character:GetChildren() do
+		if obj:IsA("Tool") then
+			equippedTool = obj
+			break
+		end
+	end
+
+	if not equippedTool then
+		notify("BypassDrop", "No tool equipped to drop!")
+		return
+	end
+
+	lastDroppedTool = equippedTool
+	equippedTool.Parent = Workspace
+	notify("BypassDrop", "Dropped: " .. equippedTool.Name)
+end
+
+-- Helper: Teleport to last dropped tool
+local function teleportToLastDroppedTool()
+	local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+	if lastDroppedTool and lastDroppedTool.Parent == Workspace then
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+		end
+		character:PivotTo(lastDroppedTool:GetPivot())
+		notify("BackTools", "Teleported to: " .. lastDroppedTool.Name)
+	else
+		notify("BackTools", "No dropped tool to teleport!")
+	end
+end
+
+-- Modern Colors
+local bgColor = Color3.fromRGB(25, 25, 35)
+local cardColor = Color3.fromRGB(35, 35, 45)
+local buttonColor = Color3.fromRGB(50, 50, 60)
+local buttonHover = Color3.fromRGB(70, 70, 80)
+local textColor = Color3.fromRGB(240, 240, 240)
+local secondaryText = Color3.fromRGB(180, 180, 200)
+local activeModeColor = Color3.fromRGB(80, 120, 200)
+
+-- Animation function
+local function animateButton(button)
+	local originalColor = button.BackgroundColor3
+
+	button.MouseEnter:Connect(function()
+		local tween = TweenService:Create(button, TweenInfo.new(0.2), {
+			BackgroundColor3 = buttonHover
+		})
+		tween:Play()
+	end)
+
+	button.MouseLeave:Connect(function()
+		local tween = TweenService:Create(button, TweenInfo.new(0.2), {
+			BackgroundColor3 = originalColor
+		})
+		tween:Play()
+	end)
+end
+
+-- Function to make frame draggable
+local function makeDraggable(frame, dragHandle)
+	local dragging = false
+	local dragInput
+	local dragStart
+	local startPos
+
+	local function update(input)
+		local delta = input.Position - dragStart
+		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+
+	local function savePosition()
+		if frame:FindFirstAncestor("ModernToolUI") then
+			uiPositions.main = frame.Position
+		elseif frame:FindFirstAncestor("ToolSearchUI") then
+			uiPositions.search = frame.Position
+		end
+	end
+
+	dragHandle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+					savePosition()
+				end
+			end)
+		end
+	end)
+
+	dragHandle.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			dragInput = input
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if input == dragInput and dragging then
+			update(input)
+			savePosition()
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
+			dragging = false
+			savePosition()
+		end
+	end)
+end
+
+local function createMainUI()
+	if uiDebounce then return end
+	uiDebounce = true
+
+	-- Clean up existing UIs
+	if LocalPlayer.PlayerGui:FindFirstChild("ModernToolUI") then
+		LocalPlayer.PlayerGui.ModernToolUI:Destroy()
+	end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "HazkScript"
+	gui.ResetOnSpawn = false
+	gui.Enabled = true
+	gui.Parent = LocalPlayer.PlayerGui
+
+	-- Main frame with shadow effect
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0.32, 0, 0.35, 0)
+	frame.Position = uiPositions.main
+	frame.BackgroundColor3 = cardColor
+	frame.BackgroundTransparency = 0.1
+	frame.BorderSizePixel = 0
+	frame.Parent = gui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = frame
+
+	-- Add subtle shadow
+	local shadow = Instance.new("Frame")
+	shadow.Size = UDim2.new(1, 10, 1, 10)
+	shadow.Position = UDim2.new(0, -5, 0, -5)
+	shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	shadow.BackgroundTransparency = 0.8
+	shadow.BorderSizePixel = 0
+	shadow.ZIndex = -1
+	shadow.Parent = frame
+	local shadowCorner = Instance.new("UICorner")
+	shadowCorner.CornerRadius = UDim.new(0, 16)
+	shadowCorner.Parent = shadow
+
+	-- Header with window controls
+	local header = Instance.new("Frame")
+	header.Size = UDim2.new(1, 0, 0.15, 0)
+	header.Position = UDim2.new(0, 0, 0, 0)
+	header.BackgroundTransparency = 1
+	header.Parent = frame
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(0.7, 0, 1, 0)
+	title.Position = UDim2.new(0, 0, 0, 0)
+	title.BackgroundTransparency = 1
+	title.Text = "TOOL MANAGER | HazkScript"
+	title.TextColor3 = textColor
+	title.Font = Enum.Font.GothamBlack
+	title.TextSize = 18
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = header
+
+	-- Close button
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Size = UDim2.new(0.2, 0, 0.6, 0)
+	closeBtn.Position = UDim2.new(0.75, 0, 0.2, 0)
+	closeBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+	closeBtn.Text = "X"
+	closeBtn.TextColor3 = textColor
+	closeBtn.Font = Enum.Font.GothamBold
+	closeBtn.TextSize = 14
+	closeBtn.Parent = header
+
+	local closeCorner = Instance.new("UICorner")
+	closeCorner.CornerRadius = UDim.new(0, 6)
+	closeCorner.Parent = closeBtn
+
+	-- Make header draggable and save position
+	makeDraggable(frame, header)
+
+	-- Content frame
+	local contentFrame = Instance.new("Frame")
+	contentFrame.Size = UDim2.new(1, 0, 0.85, 0)
+	contentFrame.Position = UDim2.new(0, 0, 0.15, 0)
+	contentFrame.BackgroundTransparency = 1
+	contentFrame.Parent = frame
+
+	-- Search input section
+	local searchContainer = Instance.new("Frame")
+	searchContainer.Size = UDim2.new(0.9, 0, 0.2, 0)
+	searchContainer.Position = UDim2.new(0.05, 0, 0.05, 0)
+	searchContainer.BackgroundTransparency = 1
+	searchContainer.Parent = contentFrame
+
+	local searchBox = Instance.new("TextBox")
+	searchBox.Size = UDim2.new(0.65, 0, 1, 0)
+	searchBox.Position = UDim2.new(0, 0, 0, 0)
+	searchBox.PlaceholderText = "Enter tool name..."
+	searchBox.PlaceholderColor3 = secondaryText
+	searchBox.Text = ""
+	searchBox.BackgroundColor3 = bgColor
+	searchBox.TextColor3 = textColor
+	searchBox.Font = Enum.Font.Gotham
+	searchBox.TextSize = 14
+	searchBox.Parent = searchContainer
+
+	local searchCorner = Instance.new("UICorner")
+	searchCorner.CornerRadius = UDim.new(0, 8)
+	searchCorner.Parent = searchBox
+
+	local actionButton = Instance.new("TextButton")
+	actionButton.Size = UDim2.new(0.3, 0, 1, 0)
+	actionButton.Position = UDim2.new(0.7, 0, 0, 0)
+	actionButton.BackgroundColor3 = activeModeColor
+	actionButton.Text = "TP"
+	actionButton.TextColor3 = textColor
+	actionButton.Font = Enum.Font.GothamBold
+	actionButton.TextSize = 14
+	actionButton.Parent = searchContainer
+
+	local actionCorner = Instance.new("UICorner")
+	actionCorner.CornerRadius = UDim.new(0, 8)
+	actionCorner.Parent = actionButton
+
+	-- Bottom buttons container
+	local buttonsContainer = Instance.new("Frame")
+	buttonsContainer.Size = UDim2.new(0.9, 0, 0.7, 0)
+	buttonsContainer.Position = UDim2.new(0.05, 0, 0.3, 0)
+	buttonsContainer.BackgroundTransparency = 1
+	buttonsContainer.Parent = contentFrame
+
+	-- Buttons grid
+	local buttonConfigs = {
+		{"BypassDrop", UDim2.new(0, 0, 0, 0), bypassDropEquipped},
+		{"BackTools", UDim2.new(0.5, 0, 0, 0), teleportToLastDroppedTool},
+		{"🔍 Search", UDim2.new(0, 0, 0.33, 0), function()
+			gui:Destroy()
+			uiDebounce = false
+			createSearchUI()
+		end}
+	}
+
+	for _, config in ipairs(buttonConfigs) do
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0.48, 0, 0.3, 0)
+		btn.Position = config[2]
+		btn.BackgroundColor3 = buttonColor
+		btn.Text = config[1]
+		btn.TextColor3 = textColor
+		btn.Font = Enum.Font.Gotham
+		btn.TextSize = 11
+		btn.Parent = buttonsContainer
+
+		local btnCorner = Instance.new("UICorner")
+		btnCorner.CornerRadius = UDim.new(0, 6)
+		btnCorner.Parent = btn
+
+		btn.MouseButton1Click:Connect(config[3])
+		animateButton(btn)
+	end
+
+	-- Apply animations to all buttons
+	animateButton(actionButton)
+	animateButton(closeBtn)
+
+	-- Button functionalities
+	actionButton.MouseButton1Click:Connect(function()
+		local toolName = searchBox.Text
+		if toolName ~= "" then
+			tpToTool(toolName)
+		else
+			notify("Error", "Please enter a tool name!")
+		end
+	end)
+
+	-- Close button functionality
+	closeBtn.MouseButton1Click:Connect(function()
+		gui:Destroy()
+	end)
+
+	-- Input focus effects
+	searchBox.Focused:Connect(function()
+		local tween = TweenService:Create(searchBox, TweenInfo.new(0.2), {
+			BackgroundColor3 = buttonHover
+		})
+		tween:Play()
+	end)
+
+	searchBox.FocusLost:Connect(function()
+		local tween = TweenService:Create(searchBox, TweenInfo.new(0.2), {
+			BackgroundColor3 = bgColor
+		})
+		tween:Play()
+	end)
+
+	uiDebounce = false
+end
+
+function createSearchUI()
+	if uiDebounce then return end
+	uiDebounce = true
+
+	if LocalPlayer.PlayerGui:FindFirstChild("ToolSearchUI") then
+		LocalPlayer.PlayerGui.ToolSearchUI:Destroy()
+	end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "ToolSearchUI"
+	gui.ResetOnSpawn = false
+	gui.Enabled = true
+	gui.Parent = LocalPlayer.PlayerGui
+
+	-- Main frame with shadow
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0.35, 0, 0.6, 0)
+	frame.Position = uiPositions.search
+	frame.BackgroundColor3 = cardColor
+	frame.BackgroundTransparency = 0.1
+	frame.BorderSizePixel = 0
+	frame.Parent = gui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = frame
+
+	-- Shadow
+	local shadow = Instance.new("Frame")
+	shadow.Size = UDim2.new(1, 10, 1, 10)
+	shadow.Position = UDim2.new(0, -5, 0, -5)
+	shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	shadow.BackgroundTransparency = 0.8
+	shadow.BorderSizePixel = 0
+	shadow.ZIndex = -1
+	shadow.Parent = frame
+	local shadowCorner = Instance.new("UICorner")
+	shadowCorner.CornerRadius = UDim.new(0, 16)
+	shadowCorner.Parent = shadow
+
+	-- Header with drag handle
+	local header = Instance.new("TextLabel")
+	header.Size = UDim2.new(1, 0, 0.08, 0)
+	header.Position = UDim2.new(0, 0, 0, 0)
+	header.BackgroundTransparency = 1
+	header.Text = "TOOL SEARCH"
+	header.TextColor3 = textColor
+	header.Font = Enum.Font.GothamBlack
+	header.TextSize = 16
+	header.Parent = frame
+
+	-- Make header draggable and save position
+	makeDraggable(frame, header)
+
+	-- Back button
+	local backButton = Instance.new("TextButton")
+	backButton.Size = UDim2.new(0.15, 0, 0.06, 0)
+	backButton.Position = UDim2.new(0.05, 0, 0.02, 0)
+	backButton.BackgroundColor3 = buttonColor
+	backButton.Text = "← Back"
+	backButton.TextColor3 = textColor
+	backButton.Font = Enum.Font.GothamBold
+	backButton.TextSize = 12
+	backButton.Parent = frame
+
+	local backCorner = Instance.new("UICorner")
+	backCorner.CornerRadius = UDim.new(0, 6)
+	backCorner.Parent = backButton
+
+	-- Search box
+	local searchBox = Instance.new("TextBox")
+	searchBox.Size = UDim2.new(0.45, 0, 0.06, 0)
+	searchBox.Position = UDim2.new(0.2, 0, 0.02, 0)
+	searchBox.PlaceholderText = "Search tools..."
+	searchBox.PlaceholderColor3 = secondaryText
+	searchBox.Text = ""
+	searchBox.BackgroundColor3 = bgColor
+	searchBox.TextColor3 = textColor
+	searchBox.Font = Enum.Font.Gotham
+	searchBox.TextSize = 14
+	searchBox.Parent = frame
+
+	local searchCorner = Instance.new("UICorner")
+	searchCorner.CornerRadius = UDim.new(0, 6)
+	searchCorner.Parent = searchBox
+
+	-- Tools count
+	local countLabel = Instance.new("TextLabel")
+	countLabel.Size = UDim2.new(0.9, 0, 0.05, 0)
+	countLabel.Position = UDim2.new(0.05, 0, 0.1, 0)
+	countLabel.BackgroundTransparency = 1
+	countLabel.Text = "Found 0 tools"
+	countLabel.TextColor3 = secondaryText
+	countLabel.Font = Enum.Font.Gotham
+	countLabel.TextSize = 12
+	countLabel.TextXAlignment = Enum.TextXAlignment.Left
+	countLabel.Parent = frame
+
+	-- Scroll frame for tools
+	local scrollFrame = Instance.new("ScrollingFrame")
+	scrollFrame.Size = UDim2.new(0.9, 0, 0.8, 0)
+	scrollFrame.Position = UDim2.new(0.05, 0, 0.16, 0)
+	scrollFrame.BackgroundColor3 = bgColor
+	scrollFrame.BackgroundTransparency = 0.1
+	scrollFrame.BorderSizePixel = 0
+	scrollFrame.ScrollBarThickness = 6
+	scrollFrame.ScrollBarImageColor3 = buttonHover
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scrollFrame.Parent = frame
+
+	local scrollCorner = Instance.new("UICorner")
+	scrollCorner.CornerRadius = UDim.new(0, 8)
+	scrollCorner.Parent = scrollFrame
+
+	-- Apply animations
+	animateButton(backButton)
+
+	-- Search functionality
+	local function updateToolList(searchText)
+		for _, child in ipairs(scrollFrame:GetChildren()) do
+			if child:IsA("Frame") then
+				child:Destroy()
+			end
+		end
+
+		local tools = getAllTools()
+		local filteredTools = {}
+		local searchLower = searchText:lower()
+
+		for _, tool in ipairs(tools) do
+			if searchText == "" or tool.Name:lower():find(searchLower) then
+				table.insert(filteredTools, tool)
+			end
+		end
+
+		countLabel.Text = "Found " .. #filteredTools .. " tools in game"
+		scrollFrame.CanvasSize = UDim2.new(0, 0, 0, #filteredTools * 55)
+
+		for i, tool in ipairs(filteredTools) do
+			local toolFrame = Instance.new("Frame")
+			toolFrame.Size = UDim2.new(1, -10, 0, 50)
+			toolFrame.Position = UDim2.new(0, 5, 0, (i-1) * 55)
+			toolFrame.BackgroundColor3 = buttonColor
+			toolFrame.BackgroundTransparency = 0
+			toolFrame.Parent = scrollFrame
+
+			local toolCorner = Instance.new("UICorner")
+			toolCorner.CornerRadius = UDim.new(0, 6)
+			toolCorner.Parent = toolFrame
+
+			local nameLabel = Instance.new("TextLabel")
+			nameLabel.Size = UDim2.new(0.65, 0, 1, 0)
+			nameLabel.Position = UDim2.new(0, 10, 0, 0)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Text = "🛠️ " .. tool.Name
+			nameLabel.TextColor3 = textColor
+			nameLabel.Font = Enum.Font.Gotham
+			nameLabel.TextSize = 14
+			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+			nameLabel.Parent = toolFrame
+
+			local actionBtn = Instance.new("TextButton")
+			actionBtn.Size = UDim2.new(0.25, 0, 0.7, 0)
+			actionBtn.Position = UDim2.new(0.72, 0, 0.15, 0)
+			actionBtn.BackgroundColor3 = activeModeColor
+			actionBtn.Text = "TP"
+			actionBtn.TextColor3 = textColor
+			actionBtn.Font = Enum.Font.GothamBold
+			actionBtn.TextSize = 12
+			actionBtn.Parent = toolFrame
+
+			local actionCorner = Instance.new("UICorner")
+			actionCorner.CornerRadius = UDim.new(0, 6)
+			actionCorner.Parent = actionBtn
+
+			actionBtn.MouseButton1Click:Connect(function()
+				local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+				local humanoid = character:FindFirstChildOfClass("Humanoid")
+				if humanoid then
+					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				end
+				character:PivotTo(tool:GetPivot())
+				notify("TP", "Teleported to: " .. tool.Name)
+			end)
+
+			animateButton(actionBtn)
+
+			toolFrame.MouseEnter:Connect(function()
+				local tween = TweenService:Create(toolFrame, TweenInfo.new(0.2), {
+					BackgroundColor3 = buttonHover
+				})
+				tween:Play()
+			end)
+
+			toolFrame.MouseLeave:Connect(function()
+				local tween = TweenService:Create(toolFrame, TweenInfo.new(0.2), {
+					BackgroundColor3 = buttonColor
+				})
+				tween:Play()
+			end)
+		end
+	end
+
+	updateToolList("")
+
+	searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		updateToolList(searchBox.Text)
+	end)
+
+	local addedConnection
+	local removedConnection
+
+	-- Setup connections
+	addedConnection = Workspace.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			updateToolList(searchBox.Text)
+		end
+	end)
+
+	removedConnection = Workspace.ChildRemoved:Connect(function(child)
+		if child:IsA("Tool") then
+			updateToolList(searchBox.Text)
+		end
+	end)
+
+	backButton.MouseButton1Click:Connect(function()
+		if addedConnection then addedConnection:Disconnect() end
+		if removedConnection then removedConnection:Disconnect() end
+		gui:Destroy()
+		uiDebounce = false
+		createMainUI()
+	end)
+
+	searchBox.Focused:Connect(function()
+		local tween = TweenService:Create(searchBox, TweenInfo.new(0.2), {
+			BackgroundColor3 = buttonHover
+		})
+		tween:Play()
+	end)
+
+	searchBox.FocusLost:Connect(function()
+		local tween = TweenService:Create(searchBox, TweenInfo.new(0.2), {
+			BackgroundColor3 = bgColor
+		})
+		tween:Play()
+	end)
+
+	uiDebounce = false
+end
+
+-- Start the script
+createMainUI()
