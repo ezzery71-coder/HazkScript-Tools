@@ -319,7 +319,7 @@ local function createMainUI()
 	local buttonConfigs = {
 		{"BypassDrop", UDim2.new(0, 0, 0, 0), bypassDropEquipped},
 		{"BackTools", UDim2.new(0.5, 0, 0, 0), teleportToLastDroppedTool},
-		{"🔍 Search", UDim2.new(0, 0, 0.33, 0), function()
+		{" Search", UDim2.new(0, 0, 0.33, 0), function()
 			gui:Destroy()
 			uiDebounce = false
 			createSearchUI()
@@ -536,7 +536,7 @@ function createSearchUI()
 			nameLabel.Size = UDim2.new(0.65, 0, 1, 0)
 			nameLabel.Position = UDim2.new(0, 10, 0, 0)
 			nameLabel.BackgroundTransparency = 1
-			nameLabel.Text = "🛠️ " .. tool.Name
+			nameLabel.Text = " " .. tool.Name
 			nameLabel.TextColor3 = textColor
 			nameLabel.Font = Enum.Font.Gotham
 			nameLabel.TextSize = 14
